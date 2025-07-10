@@ -118,7 +118,6 @@ cd hirundo_divergence_landscape
 
 In this part of the workflow, we'll quality trim raw reads, perform mapping to the reference genome, and call variants for the _Hirundo_ congeners.
 
-------------------------------------------------------------------------------------------
 ### Set up environment
 
 We'll process the data using the existing directories on the `VernalBucket` drive:
@@ -138,7 +137,6 @@ cd /data3/hirundo_divergence_landscape/
 mkdir log
 ```
 
-------------------------------------------------------------------------------------------
 ### 1. Quality trimming using Trimmomatic
 
 #### 1. Format sample list
@@ -176,7 +174,6 @@ trimmomatic SE -phred33 -threads 8 /media/drewschield/DataStore1/data/hirundo_wg
 rm /media/drewschield/VernalBucket/hirundo/fastq_filtered/*U.trim.fq.gz
 ```
 
-------------------------------------------------------------------------------------------
 ### 2. Mapping to reference genome
 
 We'll map the trimmed reads to the chromosome-assigned reference genome `/media/drewschield/VernalBucket/hirundo/Hirundo_rustica_bHirRus1.final.fasta`.
@@ -206,7 +203,6 @@ bwa mem -t 8 -R "@RG\tID:RS_4\tLB:Hirundo\tPL:illumina\tPU:NovaSeq6000\tSM:RS_4"
 samtools index -@ 8 /media/drewschield/VernalBucket/hirundo/bam/RS_4.bam
 ```
 
-------------------------------------------------------------------------------------------
 ### 3. Variant calling
 
 We'll call genomic variants using `gatk`, starting with individual variant calls using `HaplotypeCaller`, followed by cohort variant calls using `GenotypeGVCFs`.
@@ -293,7 +289,6 @@ nohup java -jar ./gatk-3.8-1-0/GenomeAnalysisTK.jar -T GenotypeGVCFs -R /media/d
 nohup java -jar ./gatk-3.8-1-0/GenomeAnalysisTK.jar -T GenotypeGVCFs -R /media/drewschield/VernalBucket/hirundo/Hirundo_rustica_bHirRus1.final.fasta -L ./log/scaffold.list13.intervals -V ./listGVCF.list -allSites -o /media/drewschield/VernalBucket/hirundo/vcf/hirundo_genus.allsites.raw.scaffold.list13.vcf.gz > ./log/GenotypeGVCFs.hirundo_genus.allsites.raw.scaffold.list13.vcf.log &
 ```
 
-------------------------------------------------------------------------------------------
 ### 4. Sex identification
 
 We'll use relative read depths on the Z chromosome and autosomes to infer genetic sex of each individual.
@@ -398,7 +393,6 @@ nohup sh runSexIdentification.sh sample.list > runSexIdentification.log &
 for indv in `cat sample.list`; do mean=`awk '{ sum += $4; n++ } END { if (n > 0) print sum / n; }' ./mosdepth_results/$indv.chr3.regions.bed`; echo $indv $mean; done
 ```
 
-------------------------------------------------------------------------------------------
 ### 5. Variant filtering
 
 In this section we'll impose various filtering steps to produce high-quality SNPs for downstream analysis.
@@ -622,7 +616,6 @@ bcftools concat -O z -o /media/drewschield/VernalBucket/hirundo/vcf/hirundo_genu
 
 We'll use genome-wide SNPs to estimate the phylogeny of the genus. This will frame our understanding for downstream analyses.
 
-------------------------------------------------------------------------------------------
 ### Set up environment
 
 ```
@@ -634,7 +627,6 @@ mkdir raxml
 mkdir svdq
 ```
 
-------------------------------------------------------------------------------------------
 ### 1. Format input data
 
 We'll extract SNPs with complete data (i.e., 0% missing genotypes) and reformat in phylip and nexus formats for analysis.
@@ -690,7 +682,6 @@ python ascbias.py -p ./hirundo_genus.snps.focal.min4.phy
 mv out.phy hirundo.snps.focal.phy
 ```
 
-------------------------------------------------------------------------------------------
 ### 2. Perform phylogenetic analysis
 
 We'll perform a concatenated analysis using RAxML and a coalescent-based analysis using SVDquartets.
@@ -735,7 +726,6 @@ We'll calculate Fst and dxy between populations, and pi within populations, usin
 
 The input data are in `/media/drewschield/VernalBucket/hirundo/vcf/chrom-specific-genus/`.
 
-------------------------------------------------------------------------------------------
 ### 1. Set up environment
 
 #### Make analysis directory
@@ -778,7 +768,6 @@ HD = Hirundo dimidiata
 
 `./chrom.list`
 
-------------------------------------------------------------------------------------------
 ### 2. Format sliding window files
 
 #### 1. First, format 'genome' file with scaffold lengths
@@ -813,7 +802,6 @@ head -n -1 /media/mother/extradrive3/hirundo_divergence_landscape/log/chromosome
 while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; grep $scaff /media/mother/extradrive3/hirundo_divergence_landscape/log/chromosome.window.1mb-100kb.bed > ./windows/window.1mb-100kb.$chrom.bed; grep $scaff /media/mother/extradrive3/hirundo_divergence_landscape/log/chromosome.window.100kb-10kb.bed > ./windows/window.100kb-10kb.$chrom.bed; grep $scaff /media/mother/extradrive3/hirundo_divergence_landscape/log/chromosome.window.50kb-5kb.bed > ./windows/window.50kb-5kb.$chrom.bed; done < /media/mother/extradrive3/hirundo_divergence_landscape/log/chromosome-scaffold.table.auto+chrZ.txt
 ```
 
-------------------------------------------------------------------------------------------
 ### 3. Perform analysis in Pixy
 
 #### 1. Format script to run analyses in sliding windows on each chromosome
@@ -856,7 +844,6 @@ head -n 1 ./results/pixy.1mb-100kb.chr1_dxy.txt > pixy.all.1mb-100kb.dxy.txt; fo
 head -n 1 ./results/pixy.1mb-100kb.chr1_pi.txt > pixy.all.1mb-100kb.pi.txt; for chrom in `cat scaffold.order.list`; do tail -n+2 ./results/pixy.1mb-100kb.${chrom}_pi.txt >> pixy.all.1mb-100kb.pi.txt; done
 ```
 
-------------------------------------------------------------------------------------------
 ### 4. Perform analysis in Pixy (inclusive of n = 1 congeners)
 
 To broadly characterize between-species differentiation and genetic diversity, we'll also perform analysis on non-overlapping 1Mb windows for a popmap that includes H. atrocerulea, H. angolensis, H. nigrita, and H. albigularis.
@@ -954,7 +941,6 @@ done
 
 `sh concatenatePixyOrder.sh`
 
-------------------------------------------------------------------------------------------
 ### 4(b). Perform analysis in Pixy (inclusive of n = 1 congeners) in 50kb windows
 
 #### 1. Format script to run analyses in sliding windows on each chromosome
@@ -998,7 +984,6 @@ done
 
 `sh concatenatePixyOrder.50kb.sh`
 
-------------------------------------------------------------------------------------------
 ### 4(c). Perform analysis in Pixy (inclusive of n = 1 congeners) in 5kb windows
 
 #### 1. Format script to run analyses in sliding windows on each chromosome
@@ -1035,7 +1020,6 @@ done
 `sh concatenatePixyOrder.5kb.sh`
 
 
-------------------------------------------------------------------------------------------
 ### 5. Perform analysis of barn swallow subspecies in Pixy
 
 To broadly characterize differentiation and genetic diversity within barn swallow, we'll also perform analysis on non-overlapping 1Mb windows for a popmap that includes the six subspecies
@@ -1132,7 +1116,6 @@ To enable comparison to other Hirundo species, we'll sample H. rustica rustica f
 
 The input data are in `/media/drewschield/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto.snps.vcf.gz`.
 
-------------------------------------------------------------------------------------------
 ### Install SMC++
 
 The SMC++ documentation can be found at:
@@ -1183,7 +1166,6 @@ pip install git+https://github.com/popgenmethods/smcpp
 smc++ vcf2smc -h
 ```
 
-------------------------------------------------------------------------------------------
 ### 1. Set up environment
 
 #### Make analysis directory
@@ -1230,7 +1212,6 @@ for i in popmap.*; do pop=`echo $i | cut -d'.' -f2`; shuf -n 5 $i > distinguishe
 
 `./chromosome-scaffold.table.auto.txt`
 
-------------------------------------------------------------------------------------------
 ### 2. Extract and format SNP data
 
 #### 1. Extract SNPs for autosomes
@@ -1251,7 +1232,6 @@ bcftools view --threads 16 -r NC_053488.1 -S sample.male.list -O z -o ./vcf/hiru
 for vcf in ./vcf/*.vcf.gz; do tabix -C -p vcf $vcf; done
 ```
 
-------------------------------------------------------------------------------------------
 ### 3. Convert VCF to SMC input
 
 #### 1. Run conversions for single population inference
@@ -1298,7 +1278,6 @@ while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; smc
 deactivate
 ```
 
-------------------------------------------------------------------------------------------
 ### 4. Run single population SMC++ analysis
 
 Note: using '-c 50000' flag during estimate helps reduce warnings about long runs of homozygosity
@@ -1326,7 +1305,6 @@ smc++ plot ./analysis/dimidiata.cubic-SMC.pdf ./analysis/dimidiata.cubic.final.j
 
 Note: not specifying '-c 50000' to mask long runs of homozygosity (unsurprisingly) systematically underestimates population size at more recent timescales.
 
-------------------------------------------------------------------------------------------
 ### 5. Run single population SMC++ analysis on Z chromosome
 
 Run SMC++ with cubic splines:
@@ -1350,7 +1328,6 @@ smc++ plot ./analysis/tahitica.cubic-chrZ-SMC.pdf ./analysis/tahitica.cubic-chrZ
 smc++ plot ./analysis/dimidiata.cubic-chrZ-SMC.pdf ./analysis/dimidiata.cubic-chrZ.final.json -g 1 -c
 ```
 
-------------------------------------------------------------------------------------------
 ### 5. Run single population SMC++ analysis into more distant past
 
 These single-population marginal estimates will be used for two-population split time inference.
@@ -1364,7 +1341,6 @@ smc++ estimate --cores 8 --spline cubic -c 50000 --timepoints 1000 5000000 -o ./
 smc++ estimate --cores 8 --spline cubic -c 50000 --timepoints 1000 5000000 -o ./analysis/ --base dimidiata.cubic-long 4.6e-9 ./out/dimidiata.*.smc.gz
 ```
 
-------------------------------------------------------------------------------------------
 ### 5. Run two-population SMC++ analysis
 
 Run SMC++ split to refine the single-population marginal estimates into an estimate of the joint demography:
@@ -1405,7 +1381,6 @@ To enable comparison to other Hirundo species, we'll sample H. rustica rustica f
 
 The input data are in `/media/drewschield/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto.snps.vcf.gz`.
 
-------------------------------------------------------------------------------------------
 ### 1. Set up environment
 
 #### Make analysis directory
@@ -2248,4 +2223,14 @@ echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.smithii.
 ```
 
 [Back to top](#contents)
+
+## Analysis in R
+
+The following scripts are in the `R` subdirectory and interact with data input from various `analysis` directories:
+* `phylogeny.R` - plot phylogenetic trees estimated using RAxML and SVDQ
+*
+
+[Back to top](#contents)
+
+
 
