@@ -13,7 +13,7 @@ __Note__: this repository assumes a specific file organization. Your environment
 * [Part 1 - Processing, mapping, and variant calling](#part-1---processing-mapping-and-variant-calling)
 * [Part 2 - Phylogeny](#part-2---phylogeny)
 * [Part 3 - Pixy: calculation of Fst, dxy, and pi](#part-3---pixy-calculation-of-fst-dxy-and-pi)
-* [Part 4 - Estimation of historical demography](#part-4---estimation-of-historical-demography)
+* [Part 4 - Estimation of historical demography and introgression](#part-4---estimation-of-historical-demography-and-introgression)
 * [Part 5 - Recombination rate estimation](#part-5---recombination-rate-estimation)
 * [Part 6 - Exon density](#part-6---exon-density)
 * [Part 7 - Tajima's D](#part-7---tajimas-d)
@@ -1100,7 +1100,7 @@ done
 [Back to top](#contents)
 
 ------------------------------------------------------------------------------------------
-## Part 4 - Estimation of historical demography
+## Part 4 - Estimation of historical demography and introgression
 
 ### Overview
 
@@ -1328,7 +1328,7 @@ smc++ plot ./analysis/tahitica.cubic-chrZ-SMC.pdf ./analysis/tahitica.cubic-chrZ
 smc++ plot ./analysis/dimidiata.cubic-chrZ-SMC.pdf ./analysis/dimidiata.cubic-chrZ.final.json -g 1 -c
 ```
 
-### 5. Run single population SMC++ analysis into more distant past
+### 6. Run single population SMC++ analysis into more distant past
 
 These single-population marginal estimates will be used for two-population split time inference.
 
@@ -1341,7 +1341,7 @@ smc++ estimate --cores 8 --spline cubic -c 50000 --timepoints 1000 5000000 -o ./
 smc++ estimate --cores 8 --spline cubic -c 50000 --timepoints 1000 5000000 -o ./analysis/ --base dimidiata.cubic-long 4.6e-9 ./out/dimidiata.*.smc.gz
 ```
 
-### 5. Run two-population SMC++ analysis
+### 7. Run two-population SMC++ analysis
 
 Run SMC++ split to refine the single-population marginal estimates into an estimate of the joint demography:
 
@@ -1362,6 +1362,93 @@ smc++ plot ./analysis/two-pop.rustica-smithii.cubic-SMC.pdf ./analysis/two-pop.r
 smc++ plot ./analysis/two-pop.rustica-neoxena.cubic-SMC.pdf ./analysis/two-pop.rustica-neoxena.cubic.final.json -g 1 -c
 smc++ plot ./analysis/two-pop.rustica-dimidiata.cubic-SMC.pdf ./analysis/two-pop.rustica-dimidiata.cubic.final.json -g 1 -c
 smc++ plot ./analysis/two-pop.neoxena-tahitica.cubic-SMC.pdf ./analysis/two-pop.neoxena-tahitica.cubic.final.json -g 1 -c
+```
+
+### Tests of introgression using D (and related) statistics
+
+We will use [Dsuite](https://github.com/millanek/Dsuite) to run ABBA-BABA tests so that we can identify evidence of introgression between *Hirundo* species.
+
+Dsuite was installed following the installation instructions on GitHub. 
+
+```
+cd /usr/local
+git clone https://github.com/millanek/Dsuite.git
+cd Dsuite
+make
+cp ./Build/Dsuite /usr/local/bin
+cd ..
+rm Dsuite -r
+```
+
+First, we set up our directory and move our files in.
+
+```
+cd /media/ripley/extradrive5
+
+mkdir hirundo_landscape
+mkdir hirundo_landscape/dsuite_hirundo_output
+cp /home/ripley/Desktop/hirundo_divergence_landscape/abba/* ./hirundo_landscape
+cd hirundo_landscape
+
+# Rename outgroup sequence population to outgroup
+nano popmap.txt
+```
+
+Now, we can run Dsuite. We will use the default settings.
+
+```
+/usr/local/bin/DtriosParallel popmap.txt hirundo_genus.abba.snps.focal.vcf.gz -c --cores 12
+
+# Merge output
+Dsuite DtriosCombine popmap_0__1_9145904 popmap_1__9145904_18291807 popmap_2__18291807_27437710 popmap_3__27437710_36583613 popmap_4__36583613_45729516 popmap_5__45729516_54875419 popmap_6__54875419_64021322 popmap_7__64021322_73167225 popmap_8__73167225_82313128 popmap_9__82313128_91459031 popmap_10__91459031_100604934 popmap_11__100604934_109750837 -o hirundo_dsuite_combined
+```
+
+Let's try it be increasing the number of jacknife blocks (-k) to ensure that our results are consistent. 
+
+```
+/usr/local/bin/DtriosParallel popmap.txt hirundo_genus.abba.snps.focal.vcf.gz -k 30 --cores 16 -n hirundo_dsuite_30jackknife
+```
+
+Dsuite is done! Now we just need to process the output. Dylan Highland moved the output into two Excel workbooks so that we could determine whether comparisons were between parapatric or allopatric species pairs. We will also plot D-statistic matrices. We will use the code provided by Dsuite to generate a heatmap. Note that I manually modified the rgb values so that the heatmap would go from white to red. The 0.4 represents the maximum D value for your legend. 
+
+```
+ruby plot_d.rb hirundo_dsuite_combined_combined_BBAA.txt plot_order.txt 0.4 hirundo_dsuite_heatmap_white2red.svg
+```
+
+### Sliding window analyses of fd
+
+We will calculate fd in sliding windows along the genome for two comparisons. We will calculate fd in 1 Mb and 50 Kb non-overlapping windows. We still need the vcf and the population map from before and now we also need a text file listing the three populations we want to compare.
+
+```
+cd /media/ripley/extradrive5/hirundo_landscape
+mkdir fd
+
+# Create text files with our species we want to compare
+echo -e "rustica\taethiopica\tsmithii" > rustica_aeothiopica_smithii.txt
+echo -e "rustica\tsmithii\tdimidiata" > rustica_smithii_dimidiata.txt
+
+# Isolate the species that we want
+grep -e "smithii" -e "aethiopica" -e "rustica" -e "Outgroup" popmap.txt > rus_aet_smith_popmap.txt
+grep -e "smithii" -e "rustica" -e "dimidiata" -e "Outgroup" popmap.txt > rus_smith_dimi_popmap.txt
+```
+
+Now we will run the sliding-window tests with different sliding window sizes. **Note** that this cannot be done in Dsuite if you want to use sliding windows of X bp. Dsuite only does sliding windows with the number of SNPs. We will install Simon Martin's genomics general pipeline to calculate fd. 
+
+```
+cd fd
+
+# Retrieve Simon Martin's scripts
+git clone https://github.com/simonhmartin/genomics_general.git
+
+python3 ./genomics_general/VCF_processing/parseVCF.py -i ../hirundo_genus.abba.snps.focal.vcf.gz  -o hirundo_genus.abba.geno.gz
+
+# 50 Kb non-overlapping 
+python3 ./genomics_general/ABBABABAwindows.py -g hirundo_genus.abba.geno.gz -f phased -P1 rustica -P2 aethiopica -P3 smithii -O Outgroup -o rustica_aethiopica_smithii_50kb.csv -w 50000 -m 50 -s 50000 --popsFile ../popmap.txt --writeFailedWindows
+python3 ./genomics_general/ABBABABAwindows.py -g hirundo_genus.abba.geno.gz -f phased -P1 rustica -P2 smithii -P3 dimidiata -O Outgroup -o rustica_smithii_dimidiata_50kb.csv -w 50000 -m 50 -s 50000 --popsFile ../popmap.txt --writeFailedWindows
+
+# 1 Mb non-overlapping
+python3 ./genomics_general/ABBABABAwindows.py -g hirundo_genus.abba.geno.gz -f phased -P1 rustica -P2 aethiopica -P3 smithii -O Outgroup -o rustica_aethiopica_smithii_1Mb.csv -w 1000000 -m 100 -s 1000000 --popsFile ../popmap.txt --writeFailedWindows
+python3 ./genomics_general/ABBABABAwindows.py -g hirundo_genus.abba.geno.gz -f phased -P1 rustica -P2 smithii -P3 dimidiata -O Outgroup -o rustica_smithii_dimidiata_1Mb.csv -w 1000000 -m 100 -s 1000000 --popsFile ../popmap.txt --writeFailedWindows
 ```
 
 [Back to top](#contents)
