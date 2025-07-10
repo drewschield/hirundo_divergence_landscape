@@ -59,7 +59,7 @@ The analysis sections below use the following software and dependencies and assu
 
 ### Overview
 
-This project aims to characterize the evolutionary processes shaping the genomic landscape of divergence among species of Hirundo.
+This project aims to characterize the evolutionary processes shaping the genomic landscape of divergence among species of _Hirundo_.
 
 Key analyses will involve the inference of historical demography within/among species, comparative analysis of recombination rate, and investigations of differentiation and sequence divergence among species.
 
@@ -67,7 +67,7 @@ Key analyses will involve the inference of historical demography within/among sp
 
 We have whole genome data (generated in 2018 & 2021) for hundreds of barn swallows (_Hirundo rustica_) that were analyzed as part of our study on the role of sexual selection in speciation.
 
-We also have whole genome data (generated in 2018) for Hirundo congeners from the different clades recovered by Dor et al. 2010:
+We also have whole genome data (generated in 2018) for _Hirundo_ congeners from the different clades recovered by Dor et al. 2010:
 * _Hirundo smithii_ (n = 10; barn swallow clade)
 * _Hirundo aethiopica_ (n = 5; barn swallow clade)
 * _Hirundo angolensis_ (n = 1; barn swallow clade)
@@ -95,7 +95,7 @@ Processing directories for fastq, filtered fastq, bam, gvcf, and vcf files are i
 /media/drewschield/VernalBucket/hirundo/vcf
 ```
 
-These directories contain the files for all ingroup barn swallow samples AND one H. smithii samples (RS_5).
+These directories contain the files for all ingroup barn swallow samples AND one _H. smithii_ samples (RS_5).
 
 Raw fastq data for the congeners are in `/media/drewschield/DataStore1/data/hirundo_wgs/hirundo_genus`.
 
@@ -143,7 +143,7 @@ mkdir log
 
 `listTrimmomatic.txt`
 
-Note: RS_5 (H. smithii) has already been processed, so is not included in the sample list.
+Note: RS_5 (_H. smithii_) has already been processed, so is not included in the sample list.
 Note: In preliminary runs, samples RS_1 and RS_4 stopped prematurely due to corruption in the compression of the read 2 file (tested using `gunzip -t $file`). We will run these as single end analyses.
 
 #### 2. Format script to run with `parallel`, calling the sample list
@@ -245,11 +245,11 @@ for i in `cat listGATK.txt`; do tabix -p vcf /media/drewschield/VernalBucket/hir
 
 #### Format sample list (with paths to gVCF files)
 
-This includes barn swallow samples and the H. smithii sample used as an outgroup in previous analyses (RS_5), plus the newly generated gVCFs for the other congeners.
+This includes barn swallow samples and the _H. smithii_ sample used as an outgroup in previous analyses (RS_5), plus the newly generated gVCFs for the other congeners.
 
 `listGVCF.list`
 
-Note: this list does not include samples in the `sample.remove.list` from the previous Hirundo speciation genomics study. This list included samples with high missing data and/or that were mislabeled during the library preparation step.
+Note: this list does not include samples in the `sample.remove.list` from the previous _Hirundo_ speciation genomics study. This list included samples with high missing data and/or that were mislabeled during the library preparation step.
 
 #### Format scaffold interval lists
 
@@ -633,7 +633,7 @@ We'll extract SNPs with complete data (i.e., 0% missing genotypes) and reformat 
 
 #### 1. Format focal sample list
 
-We'll select a representative of each species (and subspecies in the case of H. rustica), along with an outgroup Petrochelidon pyrrhonota.
+We'll select a representative of each species (and subspecies in the case of _H. rustica_), along with an outgroup _Petrochelidon pyrrhonota_.
 
 `./sample.list`
 
@@ -846,7 +846,7 @@ head -n 1 ./results/pixy.1mb-100kb.chr1_pi.txt > pixy.all.1mb-100kb.pi.txt; for 
 
 ### 4. Perform analysis in Pixy (inclusive of n = 1 congeners)
 
-To broadly characterize between-species differentiation and genetic diversity, we'll also perform analysis on non-overlapping 1Mb windows for a popmap that includes H. atrocerulea, H. angolensis, H. nigrita, and H. albigularis.
+To broadly characterize between-species differentiation and genetic diversity, we'll also perform analysis on non-overlapping 1Mb windows for a popmap that includes _H. atrocerulea_, _H. angolensis_, _H. nigrita_, and _H. albigularis_.
 
 #### Set up environment
 
@@ -1112,7 +1112,7 @@ We'll use the following assumptions to scale inferences of effective population 
 * Generation time = 1 year
 * Per generation generation rate = 4.6e-9 (from Smeds et al. 2016 germline mutation rate estimation paper)
 
-To enable comparison to other Hirundo species, we'll sample H. rustica rustica from Karasuk, Russia as a representative population.
+To enable comparison to other _Hirundo_ species, we'll sample _H. rustica rustica_ from Karasuk, Russia as a representative population.
 
 The input data are in `/media/drewschield/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto.snps.vcf.gz`.
 
@@ -1464,7 +1464,7 @@ We'll use the following assumptions to scale inferences:
 * Per generation mutation rate = 4.6e-9 (from Smeds et al. 2016 germline mutation rate estimation paper)
 * 1 year generation time
 
-To enable comparison to other Hirundo species, we'll sample H. rustica rustica from Karasuk, Russia as a representative population.
+To enable comparison to other _Hirundo_ species, we'll sample _H. rustica rustica_ from Karasuk, Russia as a representative population.
 
 The input data are in `/media/drewschield/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto.snps.vcf.gz`.
 
