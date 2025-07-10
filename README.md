@@ -2228,9 +2228,20 @@ echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.smithii.
 
 The following scripts are in the `R` subdirectory and interact with data input from various `analysis` directories:
 * `phylogeny.R` - plot phylogenetic trees estimated using RAxML and SVDQ
-*
+* `smcpp.R` - plot results from demographic history analysis in SMC++
+* `pixy_summarizeFst.R` - summarize mean genome-wide Fst between pairs of species
+* `pixy_summarize_autosome-Zchromosome.R` - summarize mean +/- standard deviation summary statistics genome-wide, on autosomes, and on the Z chromosome
+* `pixy_stats_divergence_correlation.R` - calculate correlations between diversity and divergence landscapes
+* `pixy_scans.R` - plot Fst, dxy, and π results from Pixy
+* `pixy_scans_genome-wide.R` - plot Fst, dxy, and π, and recombination results as genome-wide scans
+* `pixy_stats_linked_selection.R` - summarize relationships between Fst, dxy, and pi to characterize linked selection
+* `pixy_Fst_peaks.R` - summarize distributions of dxy and pi in differentiation islands
+* `pixy_Fst_peaks_all.R` - summarize distributions of dxy and pi in differentiation islands for all pairs of species with n > 1
+* `pixy_Fst_peaks_TajimaD_FayWuH.R` - summarize distributions of Tajima's D and Fay & Wu's H in differentiation peaks vs the genome background
+* `pixy_geography.R` - compare relationships between Fst, dxy, and pi in differentiation islands for allopatric vs parapatric/partially sympatric species
+* `pyrho.R` - plot & summarize recombination rate results from pyrho
+* `comp_exon-rho-Fst_chromosome-length.R` - compare correlations between exon density and recombination rate and Fst in 50kb windows as a function of chromosome length
+* `fd.R` - compare fd to Fst genome scans
 
 [Back to top](#contents)
-
-
 
