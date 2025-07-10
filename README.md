@@ -13,8 +13,8 @@ __Note__: this repository assumes a specific file organization. Your environment
 * [Part 1 - Processing, mapping, and variant calling](#part-1---processing-mapping-and-variant-calling)
 * [Part 2 - Phylogeny](#part-2---phylogeny)
 * [Part 3 - Pixy: calculation of Fst, dxy, and pi](#part-3---pixy-calculation-of-fst-dxy-and-pi)
-* [Part 4 - Estimation of historical demography using SMC++](#part-4---estimation-of-historical-demography-using-smc++)
-* [Part 5 - Recombination rate estimation using pyrho](#part-5---recombination-rate-estimation-using-pyrho)
+* [Part 4 - Estimation of historical demography](#part-4---estimation-of-historical-demography)
+* [Part 5 - Recombination rate estimation](#part-5---recombination-rate-estimation)
 * [Part 6 - Exon density](#part-6---exon-density)
 * [Part 7 - Tajima's D](#part-7---tajimas-d)
 * [Part 8 - Fay & Wu's H](#part-8---fay-and-wus-h)
@@ -1116,7 +1116,7 @@ done
 [Back to top](#contents)
 
 ------------------------------------------------------------------------------------------
-## Part 4 - Estimation of historical demography using SMC++
+## Part 4 - Estimation of historical demography
 
 ### Overview
 
@@ -1391,7 +1391,7 @@ smc++ plot ./analysis/two-pop.neoxena-tahitica.cubic-SMC.pdf ./analysis/two-pop.
 [Back to top](#contents)
 
 ------------------------------------------------------------------------------------------
-## Part 5 - Recombination rate estimation using pyrho
+## Part 5 - Recombination rate estimation
 
 ### Overview
 
