@@ -14,6 +14,14 @@ __Note__: this repository assumes a specific file organization. Your environment
 * [Part 2 - Phylogeny](#part-2---phylogeny)
 * [Part 3 - Pixy: calculation of Fst, dxy, and pi](#part-3---pixy-calculation-of-fst-dxy-and-pi)
 * [Part 4 - Estimation of historical demography using SMC++](#part-4---estimation-of-historical-demography-using-smc++)
+* [Part 5 - Recombination rate estimation using pyrho](#part-5---recombination-rate-estimation-using-pyrho)
+* [Part 6 - Exon density](#part-6---exon-density)
+* [Part 7 - Tajima's D](#part-7---tajimas-d)
+* [Part 8 - Fay & Wu's H](#part-8---fay-wus-h)
+* [Appendix 0 - Mapping statistics](#appendix-0---mapping-statistics)
+* [Appendix 1 - Permutations to define Fst islands](#appendix-1---permutations-to-define-fst-islands)
+* [Appendix 2 - Permutations to define SFS outliers](#appendix-2---permutations-to-define-sfs-outliers)
+* [Analysis in R](#analysis-in-r)
 
 ------------------------------------------------------------------------------------------
 ## Software and dependencies
