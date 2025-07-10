@@ -15,7 +15,6 @@ __Note__: this repository assumes a specific file organization. Your environment
 * [Part 3 - Pixy: calculation of Fst, dxy, and pi](#part-3---pixy-calculation-of-fst-dxy-and-pi)
 * [Part 4 - Estimation of historical demography using SMC++](#part-4---estimation-of-historical-demography-using-smc++)
 
-
 ------------------------------------------------------------------------------------------
 ## Software and dependencies
 
@@ -1382,3 +1381,863 @@ smc++ plot ./analysis/two-pop.neoxena-tahitica.cubic-SMC.pdf ./analysis/two-pop.
 ```
 
 [Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Part 5 - Recombination rate estimation using pyrho
+
+### Overview
+
+We'll estimate recombination rate variation across the genome using pyrho, leveraging population histories inferred using SMC++.
+
+We'll use the following assumptions to scale inferences:
+* Per generation mutation rate = 4.6e-9 (from Smeds et al. 2016 germline mutation rate estimation paper)
+* 1 year generation time
+
+To enable comparison to other Hirundo species, we'll sample H. rustica rustica from Karasuk, Russia as a representative population.
+
+The input data are in `/media/drewschield/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto.snps.vcf.gz`.
+
+------------------------------------------------------------------------------------------
+### 1. Set up environment
+
+#### Make analysis directory
+
+```
+cd /data3/hirundo_divergence_landscape/analysis
+mkdir pyrho
+cd pyrho
+mkdir lookup
+mkdir hyperparam
+mkdir optimize
+mkdir results
+mkdir test
+mkdir vcf
+```
+
+#### Format popmaps
+
+Individual species:
+```
+./popmap.rustica
+./popmap.aethiopica
+./popmap.smithii
+./popmap.neoxena
+./popmap.tahitica
+./popmap.dimidiata
+```
+
+Males only (for Z chromosome):
+```
+./popmap.male.rustica
+./popmap.male.aethiopica
+./popmap.male.smithii
+./popmap.male.neoxena
+./popmap.male.tahitica
+./popmap.male.dimidiata
+
+```
+
+#### Format scaffold-chromosome table for autosomes
+
+`./chromosome-scaffold.table.auto.txt`
+
+#### Format chromosome list for autosomes; for downstream looping
+
+`./chromosome.list`
+
+------------------------------------------------------------------------------------------
+### 2. Extract SNP data for species
+
+We'll parse species-specific VCFs using the popmaps from input VCFs for each chromosome in `/data3/hirundo_divergence_landscape/analysis/smc++/vcf/`.
+
+Important note: the SNP filtering parameters here matter a great deal. Previously had set -c 2 AND -c 2, which seriously tanks the number of SNPs per chromosome (basically you can have either two heterozygotes or one homozygous alternative allele individual), resulting in spurious recombination rate estimates.
+
+Do not filter using the settings '-c 2 -C 2'. Instead, use the '-m 2' and '-M 2' flags to specify biallelic SNPs, and set '-c 1:minor' to specify at least one minor allele contained within the sample (i.e., not invariant within the set of samples).
+
+```
+while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.rustica -O z -o ./vcf/rustica.snps.$chrom.vcf.gz ../smc++/vcf/hirundo_genus.snps.$chrom.vcf.gz; done < ./chromosome-scaffold.table.auto.txt
+while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.aethiopica -O z -o ./vcf/aethiopica.snps.$chrom.vcf.gz ../smc++/vcf/hirundo_genus.snps.$chrom.vcf.gz; done < ./chromosome-scaffold.table.auto.txt
+while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.smithii -O z -o ./vcf/smithii.snps.$chrom.vcf.gz ../smc++/vcf/hirundo_genus.snps.$chrom.vcf.gz; done < ./chromosome-scaffold.table.auto.txt
+while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.neoxena -O z -o ./vcf/neoxena.snps.$chrom.vcf.gz ../smc++/vcf/hirundo_genus.snps.$chrom.vcf.gz; done < ./chromosome-scaffold.table.auto.txt
+while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.tahitica -O z -o ./vcf/tahitica.snps.$chrom.vcf.gz ../smc++/vcf/hirundo_genus.snps.$chrom.vcf.gz; done < ./chromosome-scaffold.table.auto.txt
+while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.dimidiata -O z -o ./vcf/dimidiata.snps.$chrom.vcf.gz ../smc++/vcf/hirundo_genus.snps.$chrom.vcf.gz; done < ./chromosome-scaffold.table.auto.txt
+```
+
+We also need to parse SNPs for the Z chromosome separately (input is males-only):
+
+```
+bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.male.rustica -O z -o ./vcf/rustica.snps.chrZ.vcf.gz ../smc++/vcf/hirundo_genus.snps.chrZ.vcf.gz
+bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.male.aethiopica -O z -o ./vcf/aethiopica.snps.chrZ.vcf.gz ../smc++/vcf/hirundo_genus.snps.chrZ.vcf.gz
+bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.male.smithii -O z -o ./vcf/smithii.snps.chrZ.vcf.gz ../smc++/vcf/hirundo_genus.snps.chrZ.vcf.gz
+bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.male.neoxena -O z -o ./vcf/neoxena.snps.chrZ.vcf.gz ../smc++/vcf/hirundo_genus.snps.chrZ.vcf.gz
+bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.male.tahitica -O z -o ./vcf/tahitica.snps.chrZ.vcf.gz ../smc++/vcf/hirundo_genus.snps.chrZ.vcf.gz
+bcftools view --threads 16 -c 1:minor -m 2 -M 2 -S popmap.male.dimidiata -O z -o ./vcf/dimidiata.snps.chrZ.vcf.gz ../smc++/vcf/hirundo_genus.snps.chrZ.vcf.gz
+```
+
+------------------------------------------------------------------------------------------
+### 3. Analysis in pyrho; autosomes
+
+#### 1. Generate lookup tables based on sample sizes and mutation rate
+
+Haploid sample sizes for each species are:
+* 20 rustica
+* 10 aethiopica
+* 20 smithii
+* 20 neoxena
+* 10 tahitica
+* 16 dimidiata
+
+We'll set larger sample sizes for approximate computation (i.e., ~50%+ larger than actual sample sizes).
+
+```
+source ~/tmp/pyrho-install/pyrho-env/bin/activate
+pyrho make_table --numthreads 8 -n 20 -N 30 --mu 4.6e-9 --logfile . --outfile ./lookup/rustica_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/rustica.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 10 -N 20 --mu 4.6e-9 --logfile . --outfile ./lookup/aethiopica_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/aethiopica.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 20 -N 30 --mu 4.6e-9 --logfile . --outfile ./lookup/smithii_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/smithii.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 20 -N 30 --mu 4.6e-9 --logfile . --outfile ./lookup/neoxena_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/neoxena.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 10 -N 20 --mu 4.6e-9 --logfile . --outfile ./lookup/tahitica_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/tahitica.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 16 -N 24 --mu 4.6e-9 --logfile . --outfile ./lookup/dimidiata_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/dimidiata.cubic-SMC.csv
+```
+
+#### 2. Find hyperparameter settings that fit the data
+
+```
+pyrho hyperparam --numthreads 8 -n 20 --mu 4.6e-9 --smcpp_file ../smc++/analysis/rustica.cubic-SMC.csv --blockpenalty 10,20,50,100 --windowsize 25,50 --logfile . --tablefile ./lookup/rustica_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/rustica_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 10 --mu 4.6e-9 --smcpp_file ../smc++/analysis/aethiopica.cubic-SMC.csv --blockpenalty 10,20,50,100 --windowsize 25,50 --logfile . --tablefile ./lookup/aethiopica_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/aethiopica_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 20 --mu 4.6e-9 --smcpp_file ../smc++/analysis/smithii.cubic-SMC.csv --blockpenalty 10,20,50,100 --windowsize 25,50 --logfile . --tablefile ./lookup/smithii_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/smithii_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 20 --mu 4.6e-9 --smcpp_file ../smc++/analysis/neoxena.cubic-SMC.csv --blockpenalty 10,20,50,100 --windowsize 25,50 --logfile . --tablefile ./lookup/neoxena_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/neoxena_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 10 --mu 4.6e-9 --smcpp_file ../smc++/analysis/tahitica.cubic-SMC.csv --blockpenalty 10,20,50,100 --windowsize 25,50 --logfile . --tablefile ./lookup/tahitica_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/tahitica_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 16 --mu 4.6e-9 --smcpp_file ../smc++/analysis/dimidiata.cubic-SMC.csv --blockpenalty 10,20,50,100 --windowsize 25,50 --logfile . --tablefile ./lookup/dimidiata_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/dimidiata_hyperparam_results.txt
+```
+
+Hyperparameters to use:
+
+|Species     | Block | window |
+|------------|-------|--------|
+| rustica    | 10    | 50     |
+| aethiopica | 10    | 50     |
+| smithii    | 10    | 50     |
+| neoxena    | 10    | 50     |
+| tahitica   | 10    | 50     |
+| dimidiata  | 10    | 50     |
+
+Note: these combinations of hyperparameters are not necessarily those that yield the lowest log-likelihood, but have a balance of being in the lower few based on likelihood and having higher correlations at various resolutions.
+
+#### 3. Run optimize under various settings to assess how they affect results
+
+We'll focus on Chromosome 1A to compare within/among species.
+
+We'll perform analyses using four combinations of block penalty and window size hyperparameters:
+* 10, 25
+* 10, 50
+* 20, 25
+* 20, 50
+
+##### 1. Run script to estimate recombination rates on Chromosome 1A under different settings
+
+runOptimizeTest.sh:
+```
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do
+	pyrho optimize --numthreads 8 --tablefile ./lookup/${pop}_lookuptable.hdf --vcffile ./vcf/$pop.snps.chr1A.vcf.gz --outfile ./test/$pop.chr1A.b10-w25.rmap --blockpenalty 10 --windowsize 25 --ploidy 2 --logfile .
+	pyrho optimize --numthreads 8 --tablefile ./lookup/${pop}_lookuptable.hdf --vcffile ./vcf/$pop.snps.chr1A.vcf.gz --outfile ./test/$pop.chr1A.b10-w50.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .
+	pyrho optimize --numthreads 8 --tablefile ./lookup/${pop}_lookuptable.hdf --vcffile ./vcf/$pop.snps.chr1A.vcf.gz --outfile ./test/$pop.chr1A.b20-w25.rmap --blockpenalty 20 --windowsize 25 --ploidy 2 --logfile .
+	pyrho optimize --numthreads 8 --tablefile ./lookup/${pop}_lookuptable.hdf --vcffile ./vcf/$pop.snps.chr1A.vcf.gz --outfile ./test/$pop.chr1A.b20-w50.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+done
+```
+
+Run it:
+```
+source ~/tmp/pyrho-install/pyrho-env/bin/activate
+sh runOptimizeTest.sh
+```
+
+##### 2. Summarize recombination maps in sliding windows
+
+Reformat with scaffold information:
+```
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do scaff=`echo NC_053453.1`; awk -v var=$scaff 'BEGIN{OFS="\t"}{print var,$1,$2,$3}' ./test/$pop.chr1A.b10-w25.rmap >> ./test/recombination.$pop.chr1A.b10-w25.rmap; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do scaff=`echo NC_053453.1`; awk -v var=$scaff 'BEGIN{OFS="\t"}{print var,$1,$2,$3}' ./test/$pop.chr1A.b10-w50.rmap >> ./test/recombination.$pop.chr1A.b10-w50.rmap; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do scaff=`echo NC_053453.1`; awk -v var=$scaff 'BEGIN{OFS="\t"}{print var,$1,$2,$3}' ./test/$pop.chr1A.b20-w25.rmap >> ./test/recombination.$pop.chr1A.b20-w25.rmap; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do scaff=`echo NC_053453.1`; awk -v var=$scaff 'BEGIN{OFS="\t"}{print var,$1,$2,$3}' ./test/$pop.chr1A.b20-w50.rmap >> ./test/recombination.$pop.chr1A.b20-w50.rmap; done
+```
+
+Run bedtools to calculate means in sliding windows:
+```
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./test/recombination.$pop.chr1A.b10-w25.1Mb-100kb.txt; grep 'NC_053453.1' ../../log/chromosome.window.1mb-100kb.bed | bedtools map -a - -b ./test/recombination.$pop.chr1A.b10-w25.rmap -o mean -c 4 >> ./test/recombination.$pop.chr1A.b10-w25.1Mb-100kb.txt; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./test/recombination.$pop.chr1A.b10-w50.1Mb-100kb.txt; grep 'NC_053453.1' ../../log/chromosome.window.1mb-100kb.bed | bedtools map -a - -b ./test/recombination.$pop.chr1A.b10-w50.rmap -o mean -c 4 >> ./test/recombination.$pop.chr1A.b10-w50.1Mb-100kb.txt; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./test/recombination.$pop.chr1A.b20-w25.1Mb-100kb.txt; grep 'NC_053453.1' ../../log/chromosome.window.1mb-100kb.bed | bedtools map -a - -b ./test/recombination.$pop.chr1A.b20-w25.rmap -o mean -c 4 >> ./test/recombination.$pop.chr1A.b20-w25.1Mb-100kb.txt; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./test/recombination.$pop.chr1A.b20-w50.1Mb-100kb.txt; grep 'NC_053453.1' ../../log/chromosome.window.1mb-100kb.bed | bedtools map -a - -b ./test/recombination.$pop.chr1A.b20-w50.rmap -o mean -c 4 >> ./test/recombination.$pop.chr1A.b20-w50.1Mb-100kb.txt; done
+```
+
+Note: the different parameter settings do not dramatically affect the results, with only slight variation in point estimates within species.
+
+#### 4. Run optimize to infer fine-scale recombination maps for each chromosome
+
+```
+for chrom in `cat chromosome.list`; do pyrho optimize --numthreads 8 --tablefile ./lookup/rustica_lookuptable.hdf --vcffile ./vcf/rustica.snps.$chrom.vcf.gz --outfile ./optimize/rustica.$chrom.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .; done
+for chrom in `cat chromosome.list`; do pyrho optimize --numthreads 8 --tablefile ./lookup/aethiopica_lookuptable.hdf --vcffile ./vcf/aethiopica.snps.$chrom.vcf.gz --outfile ./optimize/aethiopica.$chrom.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .; done
+for chrom in `cat chromosome.list`; do pyrho optimize --numthreads 8 --tablefile ./lookup/smithii_lookuptable.hdf --vcffile ./vcf/smithii.snps.$chrom.vcf.gz --outfile ./optimize/smithii.$chrom.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .; done
+for chrom in `cat chromosome.list`; do pyrho optimize --numthreads 8 --tablefile ./lookup/neoxena_lookuptable.hdf --vcffile ./vcf/neoxena.snps.$chrom.vcf.gz --outfile ./optimize/neoxena.$chrom.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .; done
+for chrom in `cat chromosome.list`; do pyrho optimize --numthreads 8 --tablefile ./lookup/tahitica_lookuptable.hdf --vcffile ./vcf/tahitica.snps.$chrom.vcf.gz --outfile ./optimize/tahitica.$chrom.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .; done
+for chrom in `cat chromosome.list`; do pyrho optimize --numthreads 8 --tablefile ./lookup/dimidiata_lookuptable.hdf --vcffile ./vcf/dimidiata.snps.$chrom.vcf.gz --outfile ./optimize/dimidiata.$chrom.rmap --blockpenalty 10 --windowsize 50 --ploidy 2 --logfile .; done
+```
+
+------------------------------------------------------------------------------------------
+### 4. Analysis in pyrho; Z chromosome
+
+#### 1. Generate lookup tables based on sample sizes and mutation rate
+
+Haploid sample sizes for each species are:
+* 8 rustica
+* 8 aethiopica
+* 12 smithii
+* 10 neoxena
+* 8 tahitica
+* 8 dimidiata
+
+We'll set larger sample sizes for approximate computation (i.e., ~25%+ larger than actual sample sizes).
+
+```
+source ~/tmp/pyrho-install/pyrho-env/bin/activate
+pyrho make_table --numthreads 8 -n 8 -N 12 --mu 4.6e-9 --logfile . --outfile ./lookup/rustica-chrZ_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/rustica.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 8 -N 12 --mu 4.6e-9 --logfile . --outfile ./lookup/aethiopica-chrZ_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/aethiopica.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 12 -N 18 --mu 4.6e-9 --logfile . --outfile ./lookup/smithii-chrZ_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/smithii.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 10 -N 16 --mu 4.6e-9 --logfile . --outfile ./lookup/neoxena-chrZ_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/neoxena.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 8 -N 12 --mu 4.6e-9 --logfile . --outfile ./lookup/tahitica-chrZ_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/tahitica.cubic-SMC.csv
+pyrho make_table --numthreads 8 -n 8 -N 12 --mu 4.6e-9 --logfile . --outfile ./lookup/dimidiata-chrZ_lookuptable.hdf --approx --smcpp_file ../smc++/analysis/dimidiata.cubic-SMC.csv
+```
+
+#### 2. Find hyperparameter settings that fit the data
+
+```
+pyrho hyperparam --numthreads 8 -n 8 --mu 4.6e-9 --smcpp_file ../smc++/analysis/rustica.cubic-chrZ-SMC.csv --blockpenalty 10,20,25,50 --windowsize 25,50 --logfile . --tablefile ./lookup/rustica-chrZ_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/rustica-chrZ_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 8 --mu 4.6e-9 --smcpp_file ../smc++/analysis/aethiopica.cubic-chrZ-SMC.csv --blockpenalty 10,20,25,50 --windowsize 25,50 --logfile . --tablefile ./lookup/aethiopica-chrZ_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/aethiopica-chrZ_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 12 --mu 4.6e-9 --smcpp_file ../smc++/analysis/smithii.cubic-chrZ-SMC.csv --blockpenalty 10,20,25,50 --windowsize 25,50 --logfile . --tablefile ./lookup/smithii-chrZ_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/smithii-chrZ_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 10 --mu 4.6e-9 --smcpp_file ../smc++/analysis/neoxena.cubic-chrZ-SMC.csv --blockpenalty 10,20,25,50 --windowsize 25,50 --logfile . --tablefile ./lookup/neoxena-chrZ_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/neoxena-chrZ_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 8 --mu 4.6e-9 --smcpp_file ../smc++/analysis/tahitica.cubic-chrZ-SMC.csv --blockpenalty 10,20,25,50 --windowsize 25,50 --logfile . --tablefile ./lookup/tahitica-chrZ_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/tahitica-chrZ_hyperparam_results.txt
+pyrho hyperparam --numthreads 8 -n 8 --mu 4.6e-9 --smcpp_file ../smc++/analysis/dimidiata.cubic-chrZ-SMC.csv --blockpenalty 10,20,25,50 --windowsize 25,50 --logfile . --tablefile ./lookup/dimidiata-chrZ_lookuptable.hdf --num_sims 3 --outfile ./hyperparam/dimidiata-chrZ_hyperparam_results.txt
+```
+
+Hyperparameters to use:
+
+|Species     | Block | window |
+|------------|-------|--------|
+| rustica    | 20    | 50     |
+| aethiopica | 20    | 50     |
+| smithii    | 20    | 50     |
+| neoxena    | 20    | 50     |
+| tahitica   | 20    | 50     |
+| dimidiata  | 20    | 50     |
+
+#### 3. Run optimize to infer fine-scale recombination maps for the Z chromosome
+
+```
+pyrho optimize --numthreads 8 --tablefile ./lookup/rustica-chrZ_lookuptable.hdf --vcffile ./vcf/rustica.snps.chrZ.vcf.gz --outfile ./optimize/rustica.chrZ.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+pyrho optimize --numthreads 8 --tablefile ./lookup/aethiopica-chrZ_lookuptable.hdf --vcffile ./vcf/aethiopica.snps.chrZ.vcf.gz --outfile ./optimize/aethiopica.chrZ.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+pyrho optimize --numthreads 8 --tablefile ./lookup/smithii-chrZ_lookuptable.hdf --vcffile ./vcf/smithii.snps.chrZ.vcf.gz --outfile ./optimize/smithii.chrZ.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+pyrho optimize --numthreads 8 --tablefile ./lookup/neoxena-chrZ_lookuptable.hdf --vcffile ./vcf/neoxena.snps.chrZ.vcf.gz --outfile ./optimize/neoxena.chrZ.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+pyrho optimize --numthreads 8 --tablefile ./lookup/tahitica-chrZ_lookuptable.hdf --vcffile ./vcf/tahitica.snps.chrZ.vcf.gz --outfile ./optimize/tahitica.chrZ.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+pyrho optimize --numthreads 8 --tablefile ./lookup/dimidiata-chrZ_lookuptable.hdf --vcffile ./vcf/dimidiata.snps.chrZ.vcf.gz --outfile ./optimize/dimidiata.chrZ.rmap --blockpenalty 20 --windowsize 50 --ploidy 2 --logfile .
+```
+
+------------------------------------------------------------------------------------------
+### 5. Format results
+
+#### 1. Concatenate the recombination maps for each species
+
+Note: if you need to re-run the formatting for any reason, you need to first delete the results files so they are not appended to.
+
+```
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do while read i; do scaff=`echo "$i" | cut -f 1`; chrom=`echo "$i" | cut -f 2`; awk -v var=$scaff 'BEGIN{OFS="\t"}{print var,$1,$2,$3}' ./optimize/$pop.$chrom.rmap >> ./results/recombination.$pop.rmap; done < ./chromosome-scaffold.table.txt; done
+```
+
+#### 2. Summarize recombination maps in sliding windows
+
+```
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./results/recombination.$pop.rmap.1Mb-100kb.txt; bedtools map -a ../../log/chromosome.window.1mb-100kb.bed -b ./results/recombination.$pop.rmap -o mean -c 4 >> ./results/recombination.$pop.rmap.1Mb-100kb.txt; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./results/recombination.$pop.rmap.100kb-10kb.txt; bedtools map -a ../../log/chromosome.window.100kb-10kb.bed -b ./results/recombination.$pop.rmap -o mean -c 4 >> ./results/recombination.$pop.rmap.100kb-10kb.txt; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./results/recombination.$pop.rmap.50kb-5kb.txt; bedtools map -a ../../log/chromosome.window.50kb-5kb.bed -b ./results/recombination.$pop.rmap -o mean -c 4 >> ./results/recombination.$pop.rmap.50kb-5kb.txt; done
+```
+
+#### 3. Summarize recombination maps in non-overlapping windows
+
+```
+bedtools makewindows -g ../../log/chromosome.genome -w 1000000 > ../../log/chromosome.window.1mb.bed
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./results/recombination.$pop.rmap.1mb.txt; bedtools map -a ../../log/chromosome.window.1mb.bed -b ./results/recombination.$pop.rmap -o mean -c 4 >> ./results/recombination.$pop.rmap.1mb.txt; done
+for pop in rustica aethiopica smithii neoxena tahitica dimidiata; do echo -e "chrom\tstart\tend\trate" > ./results/recombination.$pop.rmap.50kb.txt; bedtools map -a ../../log/chromosome.window.50kb.bed -b ./results/recombination.$pop.rmap -o mean -c 4 >> ./results/recombination.$pop.rmap.50kb.txt; done
+```
+
+[Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Part 6 - Exon density
+
+### Overview
+
+We'll summarize exon density as a proxy for the frequency of targets of selection in genomic windows to compare with population genetic statistics.
+
+------------------------------------------------------------------------------------------
+### 1. Set up environment
+
+```
+cd /media/mother/extradrive3/hirundo_divergence_landscape
+mkdir annotation
+```
+
+Copied Google Drive copy of genomic GFF to `annotation` directory above.
+
+```
+cd analysis
+mkdir exon
+cd exon
+```
+
+------------------------------------------------------------------------------------------
+### 2. Parse exons and summarize with bedtools intersect & map - 1Mb windows
+
+Process input GFF entries and intersect with 1Mb windows:
+```
+grep -v '#' ../../annotation/GCF_015227805.1_bHirRus1.pri.v2_genomic.gff \
+| awk 'BEGIN{OFS="\t"}{ if ($3 == "exon") print $1,$4-1,$5,$3}' \
+| awk '!seen[$0]++' \
+| bedtools intersect -a ../../log/chromosome.window.1mb.bed -b - -wao \
+| awk 'BEGIN{OFS="\t"}{print $4,$5,$6,$8}' \
+| awk 'BEGIN{OFS="\t"}{ if ($1 != ".") print $0}' > tmp.exon.bed
+```
+
+Sort the output (-g forces sorting based on order of chromosomes in `chromosome.genome` file):
+```
+bedtools sort -i tmp.exon.bed -g ../../log/chromosome.genome > tmp.exon.sort.bed
+```
+
+Calculate sum of overlap in 1Mb windows:
+```
+echo -e "chrom\tstart\tend\tbp" > exon.density.1mb.txt; bedtools map -a ../../log/chromosome.window.1mb.bed -b tmp.exon.sort.bed -o sum -c 4 >> exon.density.1mb.txt
+```
+
+Remove temporary files:
+```
+rm ./tmp.*
+```
+
+------------------------------------------------------------------------------------------
+### 3. Parse exons and summarize with bedtools intersect & map - 50kb windows
+
+Make 50kb non-overlapping windows bed file:
+
+```
+bedtools makewindows -g ../../log/chromosome.genome -w 50000 > ../../log/chromosome.window.50kb.bed
+```
+
+Process input GFF entries and intersect with 1Mb-100kb windows:
+```
+grep -v '#' ../../annotation/GCF_015227805.1_bHirRus1.pri.v2_genomic.gff \
+| awk 'BEGIN{OFS="\t"}{ if ($3 == "exon") print $1,$4-1,$5,$3}' \
+| awk '!seen[$0]++' \
+| bedtools intersect -a ../../log/chromosome.window.50kb.bed -b - -wao \
+| awk 'BEGIN{OFS="\t"}{print $4,$5,$6,$8}' \
+| awk 'BEGIN{OFS="\t"}{ if ($1 != ".") print $0}' > tmp.exon.bed
+```
+
+Sort the output (-g forces sorting based on order of chromosomes in `chromosome.genome` file):
+```
+bedtools sort -i tmp.exon.bed -g ../../log/chromosome.genome > tmp.exon.sort.bed
+```
+
+Calculate sum of overlap in 1Mb windows:
+```
+echo -e "chrom\tstart\tend\tbp" > exon.density.50kb.txt; bedtools map -a ../../log/chromosome.window.50kb.bed -b tmp.exon.sort.bed -o sum -c 4 >> exon.density.50kb.txt
+```
+
+Remove temporary files:
+```
+rm ./tmp.*
+```
+
+[Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Part 7 - Tajima's D
+
+### Overview
+
+We'll calculate Tajima's D in sliding windows to investigate whether Fst peaks between species show signatures of positive selection (i.e., negative D).
+
+------------------------------------------------------------------------------------------
+### 1. Set up environment
+
+
+```
+cd /media/mother/extradrive3/hirundo_divergence_landscape/analysis
+mkdir tajima
+cd tajima
+mkdir results
+mkdir log
+```
+
+------------------------------------------------------------------------------------------
+### 2. Activate VCF-kit
+
+I installed VCF-kit in a virtual environment on Nostromo. To activate:
+```
+source ./vcf-kit-env/bin/activate
+```
+
+Enter `deactivate` to exit virtual environment.
+
+------------------------------------------------------------------------------------------
+### 3. Format popmaps
+
+We'll focus on the species with n > 1:
+
+```
+popmap.rustica
+popmap.aethiopica
+popmap.smithii
+popmap.neoxena
+popmap.javanica
+popmap.dimidiata
+```
+
+------------------------------------------------------------------------------------------
+### 4. Analysis in sliding windows
+
+We can run the analysis on the SNPs in `/media/mother/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto+chrZ.snps.vcf.gz`.
+
+#### Format species list
+
+`pop.list`
+
+#### Format script to run parallel analyses
+
+`runTajima_parallel.sh`
+
+```
+pop=$1
+bcftools view -S popmap.$pop -O z /media/mother/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto+chrZ.snps.vcf.gz | vk tajima 1000000 1000000 -  > ./results/tajima.$pop.1mb.txt
+bcftools view -S popmap.$pop -O z /media/mother/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto+chrZ.snps.vcf.gz | vk tajima 50000 50000 -  > ./results/tajima.$pop.50kb.txt
+bcftools view -S popmap.$pop -O z /media/mother/VernalBucket/hirundo/vcf/hirundo_genus.allsites.final.auto+chrZ.snps.vcf.gz | vk tajima 5000 5000 -  > ./results/tajima.$pop.5kb.txt
+```
+
+#### Run analysis
+
+```
+source ~/tmp/vcf-kit-install/vcf-kit-env/bin/activate
+parallel --progress --joblog ./log/logfile.runTajima -j 6 --workdir . ./runTajima_parallel.sh :::: pop.list
+```
+
+[Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Part 8 - Fay & Wu's H
+
+### Overview
+
+Measure Fay & Wu's H in sliding windows to detect signatures of high frequency derived alleles in species due to divergent positive selection.
+
+We'll perform analysis of the SFS in the R package rehh, which for SFS stats (apparently) does not require phased haplotypes.
+
+------------------------------------------------------------------------------------------
+### 1. Set up environment
+
+```
+cd /media/mother/extradrive3/hirundo_divergence_landscape/analysis
+mkdir faywu
+cd faywu
+mkdir vcf
+mkdir results
+```
+
+Retrieve script to polarize VCF by outgroup from https://github.com/kullrich/bio-scripts/blob/master/vcf/polarizeVCFbyOutgroup.py:
+
+`polarizeVCFbyOutgroup.py`
+
+------------------------------------------------------------------------------------------
+### 2. Extract VCF per autosome
+
+We can make use of the SNP VCF already extracted in `/media/mother/extradrive3/hirundo_divergence_landscape/analysis/abba/vcf/hirundo_genus.abba.snps.focal.vcf.gz`.
+
+Format chromosome/scaffold table `chromosome-scaffold.table.auto.txt `.
+
+First couple of lines:
+```
+NC_053451.1	chr1
+NC_053453.1	chr1A
+NC_053450.1	chr2
+NC_053452.1	chr3
+NC_053454.1	chr4
+```
+
+Format sample list `sample.list`.
+
+Index input VCF:
+```
+tabix -p vcf /media/mother/extradrive3/hirundo_divergence_landscape/analysis/abba/vcf/hirundo_genus.abba.snps.focal.vcf.gz
+```
+
+Extract VCFs:
+
+```
+while read list; do scaff=`echo "$list" | cut -f1`; chrom=`echo "$list" | cut -f2`; echo $chrom $scaff; \
+bcftools view --threads 16 -S ./sample.list -r $scaff -Oz -o ./vcf/hirundo_genus.faywu.snps.focal.$chrom.vcf.gz /media/mother/extradrive3/hirundo_divergence_landscape/analysis/abba/vcf/hirundo_genus.abba.snps.focal.vcf.gz; \
+done < chromosome-scaffold.table.auto.txt
+```
+
+------------------------------------------------------------------------------------------
+### 3. Polarize VCFs
+
+Write simplified VCFs for polarization script:
+```
+while read list; do scaff=`echo "$list" | cut -f1`; chrom=`echo "$list" | cut -f2`; echo $chrom $scaff; \
+(bcftools view -h ./vcf/hirundo_genus.faywu.snps.focal.$chrom.vcf.gz; bcftools query -f "%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT\\t%QUAL\\t%FILTER\\t%INFO\\tGT\\t[%GT\\t]\\n" ./vcf/hirundo_genus.faywu.snps.focal.$chrom.vcf.gz) | cat | bcftools view -m2 -M2 -v snps -O z -o ./vcf/hirundo_genus.faywu.snps.fix.$chrom.vcf.gz; \
+done < chromosome-scaffold.table.auto.txt
+```
+
+Run python script to polarize SNPs by outgroup:
+Need to change the outgroup individual to be the integer for the order where atrocaerulea is...
+```
+while read list; do scaff=`echo "$list" | cut -f1`; chrom=`echo "$list" | cut -f2`; echo $chrom $scaff; \
+python polarizeVCFbyOutgroup.py -vcf ./vcf/hirundo_genus.faywu.snps.fix.$chrom.vcf.gz  -out ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz -ind 62 -add; \
+done < chromosome-scaffold.table.auto.txt
+```
+
+Remove intermediate VCFs:
+```
+rm ./vcf/*.focal.*
+rm ./vcf/*.fix.*
+```
+
+------------------------------------------------------------------------------------------
+### 4. Extract species from polarized VCFs
+
+Format popmaps:
+```
+popmap.rustica
+popmap.aethiopica
+popmap.smithii
+popmap.neoxena
+popmap.javanica
+popmap.dimidiata
+```
+
+Extract polarized species-specific VCFs per chromosome:
+```
+while read list; do chrom=`echo "$list" | cut -f2`; bcftools view --threads 16 -S ./popmap.rustica -Oz -o ./vcf/hirundo_genus.faywu.snps.polarized.rustica.$chrom.vcf.gz ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz; done < chromosome-scaffold.table.auto.txt
+while read list; do chrom=`echo "$list" | cut -f2`; bcftools view --threads 16 -S ./popmap.aethiopica -Oz -o ./vcf/hirundo_genus.faywu.snps.polarized.aethiopica.$chrom.vcf.gz ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz; done < chromosome-scaffold.table.auto.txt
+while read list; do chrom=`echo "$list" | cut -f2`; bcftools view --threads 16 -S ./popmap.smithii -Oz -o ./vcf/hirundo_genus.faywu.snps.polarized.smithii.$chrom.vcf.gz ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz; done < chromosome-scaffold.table.auto.txt
+while read list; do chrom=`echo "$list" | cut -f2`; bcftools view --threads 16 -S ./popmap.neoxena -Oz -o ./vcf/hirundo_genus.faywu.snps.polarized.neoxena.$chrom.vcf.gz ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz; done < chromosome-scaffold.table.auto.txt
+while read list; do chrom=`echo "$list" | cut -f2`; bcftools view --threads 16 -S ./popmap.javanica -Oz -o ./vcf/hirundo_genus.faywu.snps.polarized.javanica.$chrom.vcf.gz ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz; done < chromosome-scaffold.table.auto.txt
+while read list; do chrom=`echo "$list" | cut -f2`; bcftools view --threads 16 -S ./popmap.dimidiata -Oz -o ./vcf/hirundo_genus.faywu.snps.polarized.dimidiata.$chrom.vcf.gz ./vcf/hirundo_genus.faywu.snps.polarized.$chrom.vcf.gz; done < chromosome-scaffold.table.auto.txt
+```
+
+------------------------------------------------------------------------------------------
+### 5. Perform SFS scans in rehh (50 kb)
+
+Wrote R script to calculate SFS statistics on input chromosome VCFs:
+
+`rehhSFS.R`
+
+```
+#!/usr/bin/env Rscript
+args = commandArgs(trailingOnly=TRUE)
+
+## Note: this script expects a command line argument in the form of 'chr1', for example.
+
+## Load libraries
+library(tidyverse)
+library(data.table)
+library(R.utils)
+library(vcfR)
+library(rehh)
+
+## Convert VCF to haplo format
+rus <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.rustica.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+aet <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.aethiopica.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+smi <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.smithii.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+neo <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.neoxena.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+jav <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.javanica.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+dim <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.dimidiata.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+
+## Perform SFS scans
+rus.sfs <- calc_sfs_tests(haplohh=rus,window_size=50000)
+aet.sfs <- calc_sfs_tests(haplohh=aet,window_size=50000)
+smi.sfs <- calc_sfs_tests(haplohh=smi,window_size=50000)
+neo.sfs <- calc_sfs_tests(haplohh=neo,window_size=50000)
+jav.sfs <- calc_sfs_tests(haplohh=jav,window_size=50000)
+dim.sfs <- calc_sfs_tests(haplohh=dim,window_size=50000)
+
+## Write results to files
+write.table(rus.sfs,file=paste0('./results/sfs.rustica.',args[1],'.50kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(aet.sfs,file=paste0('./results/sfs.aethiopica.',args[1],'.50kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(smi.sfs,file=paste0('./results/sfs.smithii.',args[1],'.50kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(neo.sfs,file=paste0('./results/sfs.neoxena.',args[1],'.50kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(jav.sfs,file=paste0('./results/sfs.javanica.',args[1],'.50kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(dim.sfs,file=paste0('./results/sfs.dimidiata.',args[1],'.50kb.txt'),row.names=F,quote=F,sep="\t")
+
+## End Analysis
+quit(save="no")
+```
+
+Run Rscript on each chromosome:
+```
+while read list; do chrom=`echo "$list" | cut -f2`; Rscript rehhSFS.R $chrom; done < chromosome-scaffold.table.auto.txt
+```
+
+------------------------------------------------------------------------------------------
+### Concatenate results
+
+```
+head -n 1 ./results/sfs.rustica.chr1.50kb.txt > sfs.rustica.50kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.rustica.${chrom}.50kb.txt >> sfs.rustica.50kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.aethiopica.chr1.50kb.txt > sfs.aethiopica.50kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.aethiopica.${chrom}.50kb.txt >> sfs.aethiopica.50kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.smithii.chr1.50kb.txt > sfs.smithii.50kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.smithii.${chrom}.50kb.txt >> sfs.smithii.50kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.neoxena.chr1.50kb.txt > sfs.neoxena.50kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.neoxena.${chrom}.50kb.txt >> sfs.neoxena.50kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.javanica.chr1.50kb.txt > sfs.javanica.50kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.javanica.${chrom}.50kb.txt >> sfs.javanica.50kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.dimidiata.chr1.50kb.txt > sfs.dimidiata.50kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.dimidiata.${chrom}.50kb.txt >> sfs.dimidiata.50kb.txt; done < chromosome-scaffold.table.auto.txt
+```
+
+------------------------------------------------------------------------------------------
+### 6. Perform SFS scans in rehh (5 kb)
+
+Wrote R script to calculate SFS statistics on input chromosome VCFs:
+
+`rehhSFS.5kb.R`
+
+```
+#!/usr/bin/env Rscript
+args = commandArgs(trailingOnly=TRUE)
+
+## Note: this script expects a command line argument in the form of 'chr1', for example.
+
+## Load libraries
+library(tidyverse)
+library(data.table)
+library(R.utils)
+library(vcfR)
+library(rehh)
+
+## Convert VCF to haplo format
+rus <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.rustica.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+aet <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.aethiopica.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+smi <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.smithii.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+neo <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.neoxena.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+jav <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.javanica.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+dim <- data2haplohh(hap_file = paste0('./vcf/hirundo_genus.faywu.snps.polarized.dimidiata.',args[1],'.vcf.gz'), polarize_vcf = TRUE)
+
+## Perform SFS scans
+rus.sfs <- calc_sfs_tests(haplohh=rus,window_size=5000)
+aet.sfs <- calc_sfs_tests(haplohh=aet,window_size=5000)
+smi.sfs <- calc_sfs_tests(haplohh=smi,window_size=5000)
+neo.sfs <- calc_sfs_tests(haplohh=neo,window_size=5000)
+jav.sfs <- calc_sfs_tests(haplohh=jav,window_size=5000)
+dim.sfs <- calc_sfs_tests(haplohh=dim,window_size=5000)
+
+## Write results to files
+write.table(rus.sfs,file=paste0('./results/sfs.rustica.',args[1],'.5kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(aet.sfs,file=paste0('./results/sfs.aethiopica.',args[1],'.5kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(smi.sfs,file=paste0('./results/sfs.smithii.',args[1],'.5kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(neo.sfs,file=paste0('./results/sfs.neoxena.',args[1],'.5kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(jav.sfs,file=paste0('./results/sfs.javanica.',args[1],'.5kb.txt'),row.names=F,quote=F,sep="\t")
+write.table(dim.sfs,file=paste0('./results/sfs.dimidiata.',args[1],'.5kb.txt'),row.names=F,quote=F,sep="\t")
+
+## End Analysis
+quit(save="no")
+```
+
+Run Rscript on each chromosome:
+```
+while read list; do chrom=`echo "$list" | cut -f2`; Rscript rehhSFS.5kb.R $chrom; done < chromosome-scaffold.table.auto.txt
+```
+
+------------------------------------------------------------------------------------------
+### Concatenate results
+
+```
+head -n 1 ./results/sfs.rustica.chr1.5kb.txt > sfs.rustica.5kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.rustica.${chrom}.5kb.txt >> sfs.rustica.5kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.aethiopica.chr1.5kb.txt > sfs.aethiopica.5kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.aethiopica.${chrom}.5kb.txt >> sfs.aethiopica.5kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.smithii.chr1.5kb.txt > sfs.smithii.5kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.smithii.${chrom}.5kb.txt >> sfs.smithii.5kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.neoxena.chr1.5kb.txt > sfs.neoxena.5kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.neoxena.${chrom}.5kb.txt >> sfs.neoxena.5kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.javanica.chr1.5kb.txt > sfs.javanica.5kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.javanica.${chrom}.5kb.txt >> sfs.javanica.5kb.txt; done < chromosome-scaffold.table.auto.txt
+head -n 1 ./results/sfs.dimidiata.chr1.5kb.txt > sfs.dimidiata.5kb.txt; while read list; do chrom=`echo "$list" | cut -f2`; tail -n+2 ./results/sfs.dimidiata.${chrom}.5kb.txt >> sfs.dimidiata.5kb.txt; done < chromosome-scaffold.table.auto.txt
+```
+
+[Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Appendix 0 - Mapping statistics
+
+### Overview
+
+Calculate mapping statistics for _Hirundo_ genomic data.
+
+### Run script/commands to calculate statistics with samtools
+
+```
+for indv in `cat sample.list`; do
+	echo calculating mapping statistics for $name
+	samtools stat -@ 16 /media/mother/VernalBucket/hirundo/bam/$indv.bam > stats/$indv.stat.txt
+done
+```
+
+### Extract information on different mapping statistics
+
+```
+for i in ./stats/*.stat.txt; do name=`echo $i | cut -d. -f2`; bases=`grep 'bases mapped (cigar):' $i | cut -f 3`; echo -e "$name\t$bases"; done
+for i in ./stats/*.stat.txt; do name=`echo $i | cut -d. -f2`; bases=`grep 'raw total sequences:' $i | cut -f 3`; echo -e "$name\t$bases"; done
+for i in ./stats/*.stat.txt; do name=`echo $i | cut -d. -f2`; bases=`grep 'reads mapped:' $i | cut -f 3`; echo -e "$name\t$bases"; done
+```
+
+[Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Appendix 1 - Permutations to define Fst islands
+
+### Overview
+
+We can define Fst islands using a permutation-based approach to generate a null-distribution of Fst from which to define empirical outliers.
+
+We will use the following approach to perform random permutations to generate a suitable null:
+* Randomly sample 20 50kb or 10 5kb windows (total length equal to 1Mb or 50kb, respectively), with replacement
+* Total number of permuted windows equal to total number of 1Mb or 50kb autosomal windows
+* Calculate mean Fst in each permuted window
+* Empirical Fst outliers are windows with mean Fst exceeding null distributions for each pairwise comparison
+
+The input Fst results are in `/media/mother/extradrive3/hirundo_divergence_landscape/analysis/pixy/pixy.all.5kb.fst.txt`.
+
+------------------------------------------------------------------------------------------
+### Set up environment
+
+```
+cd /media/mother/extradrive3/hirundo_divergence_landscape/analysis/pixy/
+mkdir permutations
+```
+
+The abbreviations in the results files correspond to:
+```
+HRS = Hirundo rustica savignii
+HRT = Hirundo rustica tytleri
+HRR = Hirundo rustica rustica
+HA = Hirundo aethiopica
+HAN = Hirundo angolensis
+HNI = Hirundo nigrita
+HS = Hirundo smithii
+HAL = Hirundo albigularis
+HN = Hirundo neoxena
+HT = Hirundo tahitica
+HD = Hirundo dimidiata
+HAT = Hirundo atrocerulea
+```
+
+------------------------------------------------------------------------------------------
+### 1. Perform permutations
+
+#### 1 Mb permutations based on 50 kb windows
+
+Note: there are 981 1 Mb autosomal windows.
+
+```
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.sav.txt; grep 'HRS' ./pixy.all.50kb.fst.txt | grep 'HRR' > tmp.fst.rus.sav.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.sav.txt > tmp.rus.sav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.sav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.sav.txt; done; rm tmp.fst.rus.sav.txt; rm tmp.rus.sav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.tyt.txt; grep 'HRT' ./pixy.all.50kb.fst.txt | grep 'HRR' > tmp.fst.rus.tyt.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.tyt.txt > tmp.rus.tyt.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.tyt.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.tyt.txt; done; rm tmp.fst.rus.tyt.txt; rm tmp.rus.tyt.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.aet.txt; grep 'HRR' ./pixy.all.50kb.fst.txt | grep 'HA' > tmp.fst.rus.aet.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.aet.txt > tmp.rus.aet.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.aet.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.aet.txt; done; rm tmp.fst.rus.aet.txt; rm tmp.rus.aet.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.smi.txt; grep 'HRR' ./pixy.all.50kb.fst.txt | grep 'HS' > tmp.fst.rus.smi.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.smi.txt > tmp.rus.smi.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.smi.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.smi.txt; done; rm tmp.fst.rus.smi.txt; rm tmp.rus.smi.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.neo.txt; grep 'HRR' ./pixy.all.50kb.fst.txt | grep 'HN' > tmp.fst.rus.neo.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.neo.txt > tmp.rus.neo.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.neo.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.neo.txt; done; rm tmp.fst.rus.neo.txt; rm tmp.rus.neo.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.jav.txt; grep 'HRR' ./pixy.all.50kb.fst.txt | grep 'HT' > tmp.fst.rus.jav.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.jav.txt > tmp.rus.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.jav.txt; done; rm tmp.fst.rus.jav.txt; rm tmp.rus.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.rus.dim.txt; grep 'HRR' ./pixy.all.50kb.fst.txt | grep 'HD' > tmp.fst.rus.dim.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.rus.dim.txt > tmp.rus.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.rus.dim.txt; done; rm tmp.fst.rus.dim.txt; rm tmp.rus.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.aet.smi.txt; grep 'HA' ./pixy.all.50kb.fst.txt | grep 'HS' > tmp.fst.aet.smi.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.aet.smi.txt > tmp.aet.smi.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.smi.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.aet.smi.txt; done; rm tmp.fst.aet.smi.txt; rm tmp.aet.smi.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.aet.neo.txt; grep 'HA' ./pixy.all.50kb.fst.txt | grep 'HN' > tmp.fst.aet.neo.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.aet.neo.txt > tmp.aet.neo.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.neo.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.aet.neo.txt; done; rm tmp.fst.aet.neo.txt; rm tmp.aet.neo.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.aet.jav.txt; grep 'HA' ./pixy.all.50kb.fst.txt | grep 'HT' > tmp.fst.aet.jav.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.aet.jav.txt > tmp.aet.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.aet.jav.txt; done; rm tmp.fst.aet.jav.txt; rm tmp.aet.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.aet.dim.txt; grep 'HA' ./pixy.all.50kb.fst.txt | grep 'HD' > tmp.fst.aet.dim.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.aet.dim.txt > tmp.aet.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.aet.dim.txt; done; rm tmp.fst.aet.dim.txt; rm tmp.aet.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.smi.neo.txt; grep 'HS' ./pixy.all.50kb.fst.txt | grep 'HN' > tmp.fst.smi.neo.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.smi.neo.txt > tmp.smi.neo.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smi.neo.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.smi.neo.txt; done; rm tmp.fst.smi.neo.txt; rm tmp.smi.neo.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.smi.jav.txt; grep 'HS' ./pixy.all.50kb.fst.txt | grep 'HT' > tmp.fst.smi.jav.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.smi.jav.txt > tmp.smi.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smi.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.smi.jav.txt; done; rm tmp.fst.smi.jav.txt; rm tmp.smi.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.smi.dim.txt; grep 'HS' ./pixy.all.50kb.fst.txt | grep 'HD' > tmp.fst.smi.dim.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.smi.dim.txt > tmp.smi.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smi.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.smi.dim.txt; done; rm tmp.fst.smi.dim.txt; rm tmp.smi.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.neo.jav.txt; grep 'HN' ./pixy.all.50kb.fst.txt | grep 'HT' > tmp.fst.neo.jav.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.neo.jav.txt > tmp.neo.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.neo.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.neo.jav.txt; done; rm tmp.fst.neo.jav.txt; rm tmp.neo.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.neo.dim.txt; grep 'HN' ./pixy.all.50kb.fst.txt | grep 'HD' > tmp.fst.neo.dim.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.neo.dim.txt > tmp.neo.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.neo.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.neo.dim.txt; done; rm tmp.fst.neo.dim.txt; rm tmp.neo.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.1Mb.jav.dim.txt; grep 'HT' ./pixy.all.50kb.fst.txt | grep 'HD' > tmp.fst.jav.dim.txt; for perm in $(seq 1 981); do shuf -n 20 tmp.fst.jav.dim.txt > tmp.jav.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.jav.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.1Mb.jav.dim.txt; done; rm tmp.fst.jav.dim.txt; rm tmp.jav.dim.grab
+```
+
+#### 50 kb permutations based on 5 kb windows
+
+Note: there are 19,143 50 kb autosomal windows.
+
+```
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.sav.txt; grep 'HRS' ./pixy.all.5kb.fst.txt | grep 'HRR' > tmp.fst.rus.sav.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.sav.txt > tmp.rus.sav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.sav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.sav.txt; done; rm tmp.fst.rus.sav.txt; rm tmp.rus.sav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.tyt.txt; grep 'HRT' ./pixy.all.5kb.fst.txt | grep 'HRR' > tmp.fst.rus.tyt.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.tyt.txt > tmp.rus.tyt.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.tyt.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.tyt.txt; done; rm tmp.fst.rus.tyt.txt; rm tmp.rus.tyt.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.aet.txt; grep 'HRR' ./pixy.all.5kb.fst.txt | grep 'HA' > tmp.fst.rus.aet.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.aet.txt > tmp.rus.aet.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.aet.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.aet.txt; done; rm tmp.fst.rus.aet.txt; rm tmp.rus.aet.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.smi.txt; grep 'HRR' ./pixy.all.5kb.fst.txt | grep 'HS' > tmp.fst.rus.smi.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.smi.txt > tmp.rus.smi.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.smi.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.smi.txt; done; rm tmp.fst.rus.smi.txt; rm tmp.rus.smi.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.neo.txt; grep 'HRR' ./pixy.all.5kb.fst.txt | grep 'HN' > tmp.fst.rus.neo.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.neo.txt > tmp.rus.neo.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.neo.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.neo.txt; done; rm tmp.fst.rus.neo.txt; rm tmp.rus.neo.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.jav.txt; grep 'HRR' ./pixy.all.5kb.fst.txt | grep 'HT' > tmp.fst.rus.jav.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.jav.txt > tmp.rus.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.jav.txt; done; rm tmp.fst.rus.jav.txt; rm tmp.rus.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.rus.dim.txt; grep 'HRR' ./pixy.all.5kb.fst.txt | grep 'HD' > tmp.fst.rus.dim.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.rus.dim.txt > tmp.rus.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rus.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.rus.dim.txt; done; rm tmp.fst.rus.dim.txt; rm tmp.rus.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.aet.smi.txt; grep 'HA' ./pixy.all.5kb.fst.txt | grep 'HS' > tmp.fst.aet.smi.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.aet.smi.txt > tmp.aet.smi.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.smi.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.aet.smi.txt; done; rm tmp.fst.aet.smi.txt; rm tmp.aet.smi.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.aet.neo.txt; grep 'HA' ./pixy.all.5kb.fst.txt | grep 'HN' > tmp.fst.aet.neo.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.aet.neo.txt > tmp.aet.neo.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.neo.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.aet.neo.txt; done; rm tmp.fst.aet.neo.txt; rm tmp.aet.neo.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.aet.jav.txt; grep 'HA' ./pixy.all.5kb.fst.txt | grep 'HT' > tmp.fst.aet.jav.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.aet.jav.txt > tmp.aet.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.aet.jav.txt; done; rm tmp.fst.aet.jav.txt; rm tmp.aet.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.aet.dim.txt; grep 'HA' ./pixy.all.5kb.fst.txt | grep 'HD' > tmp.fst.aet.dim.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.aet.dim.txt > tmp.aet.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aet.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.aet.dim.txt; done; rm tmp.fst.aet.dim.txt; rm tmp.aet.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.smi.neo.txt; grep 'HS' ./pixy.all.5kb.fst.txt | grep 'HN' > tmp.fst.smi.neo.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.smi.neo.txt > tmp.smi.neo.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smi.neo.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.smi.neo.txt; done; rm tmp.fst.smi.neo.txt; rm tmp.smi.neo.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.smi.jav.txt; grep 'HS' ./pixy.all.5kb.fst.txt | grep 'HT' > tmp.fst.smi.jav.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.smi.jav.txt > tmp.smi.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smi.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.smi.jav.txt; done; rm tmp.fst.smi.jav.txt; rm tmp.smi.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.smi.dim.txt; grep 'HS' ./pixy.all.5kb.fst.txt | grep 'HD' > tmp.fst.smi.dim.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.smi.dim.txt > tmp.smi.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smi.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.smi.dim.txt; done; rm tmp.fst.smi.dim.txt; rm tmp.smi.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.neo.jav.txt; grep 'HN' ./pixy.all.5kb.fst.txt | grep 'HT' > tmp.fst.neo.jav.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.neo.jav.txt > tmp.neo.jav.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.neo.jav.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.neo.jav.txt; done; rm tmp.fst.neo.jav.txt; rm tmp.neo.jav.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.neo.dim.txt; grep 'HN' ./pixy.all.5kb.fst.txt | grep 'HD' > tmp.fst.neo.dim.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.neo.dim.txt > tmp.neo.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.neo.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.neo.dim.txt; done; rm tmp.fst.neo.dim.txt; rm tmp.neo.dim.grab
+echo -e "permutation\tFst" > ./permutations/permutation.fst.50kb.jav.dim.txt; grep 'HT' ./pixy.all.5kb.fst.txt | grep 'HD' > tmp.fst.jav.dim.txt; for perm in $(seq 1 19143); do shuf -n 10 tmp.fst.jav.dim.txt > tmp.jav.dim.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.jav.dim.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.fst.50kb.jav.dim.txt; done; rm tmp.fst.jav.dim.txt; rm tmp.jav.dim.grab
+```
+
+[Back to top](#contents)
+
+------------------------------------------------------------------------------------------
+## Appendix 2 - Permutations to define SFS outliers
+
+### Overview
+
+We can apply the same permutation approach to define Fst outliers to define Tajima's D and Fay & Wu's H outliers.
+
+The input Tajima's D results are in `/media/mother/extradrive3/hirundo_divergence_landscape/analysis/tajima/results/`.
+
+The input Fay & Wu's H results are in `/media/mother/extradrive3/hirundo_divergence_landscape/analysis/faywu/`.
+
+------------------------------------------------------------------------------------------
+### Set up environment - Tajima's D
+
+```
+cd /media/mother/extradrive3/hirundo_divergence_landscape/analysis/tajima/
+mkdir permutations
+```
+
+------------------------------------------------------------------------------------------
+### 1. Perform permutations
+
+#### 50 kb permutations based on 5 kb windows
+
+Note: there are 19,143 50 kb autosomal windows.
+
+```
+echo -e "permutation\tTajimaD" > ./permutations/permutation.tajima.50kb.aethiopica.txt; for perm in $(seq 1 19143); do tail -n+2 ./results/tajima.aethiopica.5kb.txt | shuf -n 10 > tmp.aethiopica.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.aethiopica.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.tajima.50kb.aethiopica.txt; done; rm tmp.aethiopica.grab
+echo -e "permutation\tTajimaD" > ./permutations/permutation.tajima.50kb.dimidiata.txt; for perm in $(seq 1 19143); do tail -n+2 ./results/tajima.dimidiata.5kb.txt | shuf -n 10 > tmp.dimidiata.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.dimidiata.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.tajima.50kb.dimidiata.txt; done; rm tmp.dimidiata.grab
+echo -e "permutation\tTajimaD" > ./permutations/permutation.tajima.50kb.javanica.txt; for perm in $(seq 1 19143); do tail -n+2 ./results/tajima.javanica.5kb.txt | shuf -n 10 > tmp.javanica.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.javanica.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.tajima.50kb.javanica.txt; done; rm tmp.javanica.grab
+echo -e "permutation\tTajimaD" > ./permutations/permutation.tajima.50kb.neoxena.txt; for perm in $(seq 1 19143); do tail -n+2 ./results/tajima.neoxena.5kb.txt | shuf -n 10 > tmp.neoxena.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.neoxena.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.tajima.50kb.neoxena.txt; done; rm tmp.neoxena.grab
+echo -e "permutation\tTajimaD" > ./permutations/permutation.tajima.50kb.rustica.txt; for perm in $(seq 1 19143); do tail -n+2 ./results/tajima.rustica.5kb.txt | shuf -n 10 > tmp.rustica.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.rustica.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.tajima.50kb.rustica.txt; done; rm tmp.rustica.grab
+echo -e "permutation\tTajimaD" > ./permutations/permutation.tajima.50kb.smithii.txt; for perm in $(seq 1 19143); do tail -n+2 ./results/tajima.smithii.5kb.txt | shuf -n 10 > tmp.smithii.grab; mean=`awk '{ sum += $6 } END { if (NR > 0) print sum / NR }' tmp.smithii.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.tajima.50kb.smithii.txt; done; rm tmp.smithii.grab
+```
+
+------------------------------------------------------------------------------------------
+### Set up environment - Fay & Wu's H
+
+```
+cd /media/mother/extradrive3/hirundo_divergence_landscape/analysis/faywu/
+mkdir permutations
+```
+
+------------------------------------------------------------------------------------------
+### 2. Perform permutations
+
+#### 50 kb permutations based on 5 kb windows
+
+Note: there are 19,143 50 kb autosomal windows.
+
+```
+echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.aethiopica.txt; for perm in $(seq 1 19143); do tail -n+2 ./sfs.aethiopica.5kb.txt | shuf -n 10 > tmp.aethiopica.grab; mean=`awk '{ sum += $9 } END { if (NR > 0) print sum / NR }' tmp.aethiopica.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.faywu.50kb.aethiopica.txt; done; rm tmp.aethiopica.grab
+echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.dimidiata.txt; for perm in $(seq 1 19143); do tail -n+2 ./sfs.dimidiata.5kb.txt | shuf -n 10 > tmp.dimidiata.grab; mean=`awk '{ sum += $9 } END { if (NR > 0) print sum / NR }' tmp.dimidiata.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.faywu.50kb.dimidiata.txt; done; rm tmp.dimidiata.grab
+echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.javanica.txt; for perm in $(seq 1 19143); do tail -n+2 ./sfs.javanica.5kb.txt | shuf -n 10 > tmp.javanica.grab; mean=`awk '{ sum += $9 } END { if (NR > 0) print sum / NR }' tmp.javanica.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.faywu.50kb.javanica.txt; done; rm tmp.javanica.grab
+echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.neoxena.txt; for perm in $(seq 1 19143); do tail -n+2 ./sfs.neoxena.5kb.txt | shuf -n 10 > tmp.neoxena.grab; mean=`awk '{ sum += $9 } END { if (NR > 0) print sum / NR }' tmp.neoxena.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.faywu.50kb.neoxena.txt; done; rm tmp.neoxena.grab
+echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.rustica.txt; for perm in $(seq 1 19143); do tail -n+2 ./sfs.rustica.5kb.txt | shuf -n 10 > tmp.rustica.grab; mean=`awk '{ sum += $9 } END { if (NR > 0) print sum / NR }' tmp.rustica.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.faywu.50kb.rustica.txt; done; rm tmp.rustica.grab
+echo -e "permutation\tFAY_WU_H" > ./permutations/permutation.faywu.50kb.smithii.txt; for perm in $(seq 1 19143); do tail -n+2 ./sfs.smithii.5kb.txt | shuf -n 10 > tmp.smithii.grab; mean=`awk '{ sum += $9 } END { if (NR > 0) print sum / NR }' tmp.smithii.grab`; echo -e "$perm\t$mean" >> ./permutations/permutation.faywu.50kb.smithii.txt; done; rm tmp.smithii.grab
+```
+
+[Back to top](#contents)
+
