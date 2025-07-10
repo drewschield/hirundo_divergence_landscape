@@ -1,0 +1,26 @@
+#NEXUS 
+
+Begin trees;  [Treefile saved Fri Oct  6 12:56:58 2023]
+[!
+>Data file = hirundo_genus.snps.focal.min4.nexus
+]
+	Translate
+		1 HR324,
+		2 HR2600_27714,
+		3 HR1003,
+		4 HR3,
+		5 HR1621,
+		6 HRx242024,
+		7 RS_36,
+		8 RS_39,
+		9 RS_42,
+		10 RS_43,
+		11 RS_6,
+		12 RS_19,
+		13 RS_32,
+		14 RS_40,
+		15 RS_25,
+		16 DMNS45604
+		;
+tree 'PAUP_1' = [&U] (1,2,(3,(((4,5)46,6)92,((7,8)100,((9,10)97,(11,((12,13)100,((14,16)91,15)100)100)89)92)100)86)68)100;
+End;
